@@ -1,4 +1,4 @@
-#include <netdb.h>
+#include <netinet/in.h>
 #include <assert.h>
 #include "packet.h"
 #include "probe_send.h"
@@ -37,7 +37,7 @@ static int probe_send_one(int sock, struct route_info *route, in_port_t sport, i
 
 	if (sendto(sock, packet, packet_size, 0, (struct sockaddr *) &addr, addrlen) < 0) {
 		// TODO: стоит обработать errno и проверить причину ошибки отправки
-		plog_err("Cannot send a packet on raw socket to dport %d (retry_index %d)", dport, retry_index);
+		plog_warning("Cannot send a packet on raw socket to dport %d (retry_index %d)", dport, retry_index);
 		return -1;
 	}
 

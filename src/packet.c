@@ -58,6 +58,9 @@ static void packet_craft_ipv6(const struct route_info *route, struct ip6_hdr *hd
 	hdr->ip6_plen = htons(sizeof(struct tcphdr));
 	hdr->ip6_nxt  = IPPROTO_TCP;
 	hdr->ip6_hlim = DEFAULT_TTL;
+
+	memcpy(&hdr->ip6_src, &route->src, sizeof(struct in6_addr));
+	memcpy(&hdr->ip6_dst, &route->dst, sizeof(struct in6_addr));
 }
 
 

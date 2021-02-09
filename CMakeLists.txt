@@ -6,6 +6,7 @@ add_library(portscanner SHARED
         src/packet.c
         src/portscan.c
         src/route.c
+        src/probe_recv.c
         src/probe_send.c
 )
 

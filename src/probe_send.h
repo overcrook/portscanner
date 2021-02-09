@@ -1,6 +1,6 @@
 #ifndef PORTSCANNER_PROBE_SEND_H
 #define PORTSCANNER_PROBE_SEND_H
-#include <netdb.h>
+#include <netinet/in.h>
 
 
 /**

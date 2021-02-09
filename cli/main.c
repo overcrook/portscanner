@@ -47,9 +47,19 @@ static inline int parse_ports(struct portscan_req *req, const char *source)
 			return -1;
 
 		req->port_end = val;
+	} else {
+		req->port_end = req->port_start;
 	}
 
-	return (*delim == '\0') ? 0 : -1;
+	if (*delim != '\0')
+		return -1;
+
+	if (req->port_start == 0 || req->port_start > 65535 || req->port_end < req->port_start || req->port_end > 65535) {
+		usage(EXIT_FAILURE);
+		return -1; // unreachable
+	}
+
+	return 0;
 }
 
 static void parse_args(int argc, char *const argv[], struct portscan_req *req)
@@ -108,15 +118,25 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req)
 int main(int argc, char *const argv[])
 {
 	struct portscan_req req;
+	struct portscan_result *results;
 	int ret;
 
 	memset(&req, 0, sizeof(req));
 	parse_args(argc, argv, &req);
 
+	size_t results_count = req.port_end - req.port_start + 1;
+	results = malloc(sizeof(struct portscan_result) * results_count);
+
+	if (!results) {
+		fprintf(stderr, "Cannot allocate memory!\n");
+		exit(EXIT_FAILURE);
+	}
+
 	openlog("portscan", LOG_PERROR | LOG_CONS | LOG_PID, LOG_USER);
 	srand(time(NULL));
-	ret = portscan_execute(&req, NULL);
+	ret = portscan_execute(&req, results);
 	closelog();
 
+	free(results);
 	return ret ? EXIT_FAILURE : EXIT_SUCCESS;
 }
