@@ -4,21 +4,10 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <portscan.h>
+
+#include "route.h"
 #include "log.h"
 
-
-union in46_addr {
-	struct in_addr v4;
-	struct in6_addr v6;
-};
-
-struct route_info {
-	int af;
-	unsigned int ifindex;
-
-	union in46_addr src;
-	union in46_addr dst;
-};
 
 static int parse_ip(const char *str_address, union in46_addr *addr)
 {
@@ -87,7 +76,20 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 		}
 	}
 
+	if (fetch_route_info(&route_info) < 0)
+		return -1;
 
+	char src_ip[INET6_ADDRSTRLEN] = "";
+	char ifname[IF_NAMESIZE] = "";
+
+	if (route_info.af == AF_INET)
+		inet_ntop(route_info.af, &route_info.src.v4, src_ip, sizeof(src_ip));
+	else
+		inet_ntop(route_info.af, &route_info.src.v6, src_ip, sizeof(src_ip));
+
+	if_indextoname(route_info.ifindex, ifname);
+
+	log_debug("Host %s is available from dev %s with src %s", req->dst_ip, ifname, src_ip);
 
 	// TODO: actual port scan
 	return 0;
