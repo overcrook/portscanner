@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <portscan.h>
 #include <syslog.h>
+#include <time.h>
 
 __attribute__((noreturn))
 static void usage(int exitcode)
@@ -113,6 +114,7 @@ int main(int argc, char *const argv[])
 	parse_args(argc, argv, &req);
 
 	openlog("portscan", LOG_PERROR | LOG_CONS | LOG_PID, LOG_USER);
+	srand(time(NULL));
 	ret = portscan_execute(&req, NULL);
 	closelog();
 

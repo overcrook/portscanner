@@ -4,9 +4,13 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <portscan.h>
+#include <unistd.h>
+#include <stdlib.h>
 
+#include "packet.h"
 #include "route.h"
 #include "log.h"
+#include "probe_send.h"
 
 
 static int parse_ip(const char *str_address, union in46_addr *addr)
@@ -92,6 +96,22 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 	log_debug("Host %s is available from dev %s with src %s", req->dst_ip, ifname, src_ip);
 
 	// TODO: actual port scan
+	int rawsock = socket(route_info.af, SOCK_RAW, IPPROTO_RAW);
+
+	if (rawsock < 0) {
+		plog_err("Cannot open socket(%s, SOCK_RAW, IPPROTO_RAW)", route_info.af == AF_INET6 ? "AF_INET6" : "AF_INET");
+		return -1;
+	}
+
+	// Генерируем рандомный порт в диапазоне 32768-61000
+	in_port_t sport = rand() % (61000 - 32768) + 32768;
+
+	// Генерируем рандомный sequence number
+	uint32_t tcp_sn = rand();
+
+	probe_send(rawsock, &route_info, sport, req->port_start, req->port_end, tcp_sn, 0);
+
+	close(rawsock);
 	return 0;
 }
 
