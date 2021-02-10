@@ -8,6 +8,7 @@
 #include <portscan.h>
 #include <syslog.h>
 #include <time.h>
+#include <assert.h>
 
 #define BIT(x)  (1UL << x)
 
@@ -184,11 +185,33 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 	}
 }
 
+static inline struct timespec timeget(void)
+{
+	struct timespec ts;
+
+	int ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	assert(ret == 0);
+	return ts;
+}
+
+static inline long timediff(struct timespec *begin)
+{
+	struct timespec end = timeget();
+
+	if (end.tv_sec > begin->tv_sec)
+		return (end.tv_sec - begin->tv_sec) * 1000L + (end.tv_nsec + 1000000000L - begin->tv_nsec) / 1000000L;
+
+	return (end.tv_nsec - begin->tv_nsec) / 1000000L;
+}
+
 int main(int argc, char *const argv[])
 {
 	struct cli_options options;
 	struct portscan_req req;
 	struct portscan_result *results;
+	struct timespec ps_begin_time;
+	long elapsed_seconds;
 	int ret;
 
 	memset(&req, 0, sizeof(req));
@@ -209,7 +232,11 @@ int main(int argc, char *const argv[])
 	openlog("portscan", LOG_PERROR | LOG_CONS | LOG_PID, LOG_USER);
 	setlogmask(options.logmask);
 	srand(time(NULL));
+	ps_begin_time = timeget();
+
 	ret = portscan_execute(&req, results);
+
+	elapsed_seconds = timediff(&ps_begin_time);
 	closelog();
 
 	if (ret == 0) {
@@ -223,6 +250,8 @@ int main(int argc, char *const argv[])
 
 			printf(" %d/tcp  \t%s\n", results[i].port, portscan_strstatus(status));
 		}
+
+		printf("Port scan completed in %ld.%03ld sec.\n", elapsed_seconds / 1000, elapsed_seconds % 1000);
 	}
 
 	free(results);
