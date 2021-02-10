@@ -71,6 +71,17 @@ static int validate_request(struct portscan_req *req, struct route_info *route_i
 	return 0;
 }
 
+static inline void log_route(struct route_info *route_info, const char *dst)
+{
+	char src_ip[INET6_ADDRSTRLEN] = "";
+	char ifname[IF_NAMESIZE] = "";
+
+	inet_ntop(route_info->af, &route_info->src, src_ip, sizeof(src_ip));
+	if_indextoname(route_info->ifindex, ifname);
+
+	log_debug("Host %s is available from dev %s with src %s", dst, ifname, src_ip);
+}
+
 
 int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 {
@@ -89,17 +100,7 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 	if (fetch_route_info(&route_info) < 0)
 		return -1;
 
-	char src_ip[INET6_ADDRSTRLEN] = "";
-	char ifname[IF_NAMESIZE] = "";
-
-	if (route_info.af == AF_INET)
-		inet_ntop(route_info.af, &route_info.src.v4, src_ip, sizeof(src_ip));
-	else
-		inet_ntop(route_info.af, &route_info.src.v6, src_ip, sizeof(src_ip));
-
-	if_indextoname(route_info.ifindex, ifname);
-
-	log_debug("Host %s is available from dev %s with src %s", req->dst_ip, ifname, src_ip);
+	log_route(&route_info, req->dst_ip);
 
 	for (int i = 0; i <= req->port_end - req->port_start; i++) {
 		results[i].port   = req->port_start + i;
