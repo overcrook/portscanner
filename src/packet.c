@@ -12,58 +12,6 @@
 // 1460 * 45 = 65700 - уже не умещается
 #define TCP_MAX_WINDOW 64240
 
-// TODO: сделать настройку TTL через параметры запуска (хотя кому это будет нужно?)
-#define DEFAULT_TTL 64
-
-
-/**
- * Заполняет заголовок IPv4 всеми необходимыми данными для отправки.
- *
- * Предполагается, что отправляется всего один TCP-заголовок без полезной нагрузки.
- *
- * @note Контрольная сумма не заполняется, так как посчитается ядром автоматически
- *
- * @param route - информация о маршруте до целевой машины
- * @param hdr   - заголовок IP, который нужно заполнить
- */
-static void packet_craft_ipv4(const struct route_info *route, struct iphdr *hdr)
-{
-	hdr->version  = 4; // IPv4
-	hdr->ihl      = 5;
-	hdr->tos      = 0;
-	hdr->tot_len  = htons(hdr->ihl + sizeof(struct tcphdr));
-	hdr->id       = 0;
-	hdr->frag_off = htons(IP_DF);
-	hdr->ttl      = DEFAULT_TTL;
-	hdr->protocol = IPPROTO_TCP;
-	hdr->saddr    = route->src.v4.s_addr;
-	hdr->daddr    = route->dst.v4.s_addr;
-}
-
-/**
- * Заполняет заголовок IPv6 всеми необходимыми данными для отправки.
- *
- * Предполагается, что отправляется всего один TCP-заголовок без полезной нагрузки.
- *
- * @note Контрольная сумма не заполняется, так как посчитается ядром автоматически
- *
- * @param route - информация о маршруте до целевой машины
- * @param hdr   - заголовок IP, который нужно заполнить
- */
-static void packet_craft_ipv6(const struct route_info *route, struct ip6_hdr *hdr)
-{
-	(void) route; // unused
-
-	hdr->ip6_vfc  = 6 << 4; // IPv6
-	hdr->ip6_plen = htons(sizeof(struct tcphdr));
-	hdr->ip6_nxt  = IPPROTO_TCP;
-	hdr->ip6_hlim = DEFAULT_TTL;
-
-	memcpy(&hdr->ip6_src, &route->src, sizeof(struct in6_addr));
-	memcpy(&hdr->ip6_dst, &route->dst, sizeof(struct in6_addr));
-}
-
-
 /**
  * Рассчитывает стандартную контрольную сумму для последовательности байт.
  *
@@ -163,14 +111,7 @@ static void packet_craft_tcp(const struct tcp_setup *setup_info, struct tcphdr *
 	hdr->check    = calculate_tcp_cksum(setup_info, hdr);
 }
 
-/**
- * Инициализирует пакеты IPv4/IPv6 + TCP с требуемой информацией на указанном массиве.
- *
- * @param setup_info    - информация, требуемая для заполнения в IP/TCP пакеты (адреса, порты, IP.ID, TCP.SN, ...).
- * @param packet        - исходный буфер для записи
- * @param packet_size   - доступный размер буфера
- * @return размер получившегося пакета
- */
+
 int packet_craft(const struct tcp_setup *setup_info, uint8_t *packet, size_t packet_size)
 {
 	assert(setup_info && packet);
@@ -178,29 +119,13 @@ int packet_craft(const struct tcp_setup *setup_info, uint8_t *packet, size_t pac
 	struct tcphdr *tcphdr;
 	size_t crafted_size = sizeof(struct tcphdr);
 
-	if (setup_info->route->af == AF_INET6)
-		crafted_size += sizeof(struct ip6_hdr);
-	else
-		crafted_size += sizeof(struct iphdr);
-
 	if (packet_size < crafted_size) {
 		log_err("Packet size is too small: %zu bytes needed but only %zu provided", crafted_size, packet_size);
 		return -1;
 	}
 
 	memset(packet, 0, crafted_size);
-
-	if (setup_info->route->af == AF_INET6) {
-		struct ip6_hdr *iphdr = (struct ip6_hdr *) packet;
-
-		tcphdr = (struct tcphdr *) (packet + sizeof(struct ip6_hdr));
-		packet_craft_ipv6(setup_info->route, iphdr);
-	} else {
-		struct iphdr *iphdr = (struct iphdr *) packet;
-
-		tcphdr = (struct tcphdr *) (packet + sizeof(struct iphdr));
-		packet_craft_ipv4(setup_info->route, iphdr);
-	}
+	tcphdr = (struct tcphdr *) packet;
 
 	packet_craft_tcp(setup_info, tcphdr);
 

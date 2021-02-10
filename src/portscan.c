@@ -108,10 +108,10 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 	}
 
 	// TODO: actual port scan
-	int rawsock = socket(route_info.af, SOCK_RAW, IPPROTO_RAW);
+	int rawsock = socket(route_info.af, SOCK_RAW, IPPROTO_TCP);
 
 	if (rawsock < 0) {
-		plog_err("Cannot open socket(%s, SOCK_RAW, IPPROTO_RAW)", route_info.af == AF_INET6 ? "AF_INET6" : "AF_INET");
+		plog_err("Cannot open socket(%s, SOCK_RAW, IPPROTO_TCP)", route_info.af == AF_INET6 ? "AF_INET6" : "AF_INET");
 		return -1;
 	}
 
