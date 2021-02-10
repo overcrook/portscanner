@@ -13,6 +13,7 @@
 
 struct cli_options {
 	uint8_t show_filter;
+	uint8_t logmask;
 };
 
 __attribute__((noreturn))
@@ -53,6 +54,32 @@ static void parse_show_filter(struct cli_options *options, const char *source)
 		usage(EXIT_FAILURE);
 
 	free(source_copy);
+}
+
+static void parse_log(struct cli_options *options, const char *source)
+{
+	const char *log_levels[] = {
+		[LOG_EMERG]   = "emerg",
+		[LOG_ALERT]   = "alert",
+		[LOG_CRIT]    = "crit",
+		[LOG_ERR]     = "err",
+		[LOG_WARNING] = "warning",
+		[LOG_NOTICE]  = "notice",
+		[LOG_INFO]    = "info",
+		[LOG_DEBUG]   = "debug",
+	};
+
+	if (!strncasecmp(source, "log_", 4))
+		source += 4;
+
+	for (int i = 0; i < sizeof(log_levels) / sizeof(log_levels[0]); i++) {
+		if (!strcasecmp(source, log_levels[i])) {
+			options->logmask = LOG_UPTO(i);
+			return;
+		}
+	}
+
+	usage(EXIT_FAILURE);
 }
 
 static inline int parse_ports(struct portscan_req *req, const char *source)
@@ -101,6 +128,7 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 		{"dest",            required_argument, 0, 'd'},
 		{"interface",       required_argument, 0, 'i'},
 		{"ports",           required_argument, 0, 'p'},
+		{"loglevel",        required_argument, 0, 'l'},
 		{"show",            required_argument, 0, 1},
 		{"help",            required_argument, 0, 'h'},
 		{"version",         required_argument, 0, 'v'},
@@ -109,7 +137,7 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 
 	while (1) {
 		int option_index = 0;
-		int opt = getopt_long(argc, argv, "hvs:d:i:p:", long_options, &option_index);
+		int opt = getopt_long(argc, argv, "hvs:d:i:p:l:", long_options, &option_index);
 
 		if (opt == -1)
 			break;
@@ -131,6 +159,10 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 				if (parse_ports(req, optarg))
 					usage(EXIT_FAILURE);
 
+				break;
+
+			case 'l':
+				parse_log(options, optarg);
 				break;
 
 			case 1:
@@ -162,6 +194,7 @@ int main(int argc, char *const argv[])
 	memset(&req, 0, sizeof(req));
 	memset(&options, 0, sizeof(options));
 	options.show_filter = BIT(PORT_STATUS_OPEN) | BIT(PORT_STATUS_FILTERED);
+	options.logmask = LOG_UPTO(LOG_WARNING);
 
 	parse_args(argc, argv, &req, &options);
 
@@ -174,6 +207,7 @@ int main(int argc, char *const argv[])
 	}
 
 	openlog("portscan", LOG_PERROR | LOG_CONS | LOG_PID, LOG_USER);
+	setlogmask(options.logmask);
 	srand(time(NULL));
 	ret = portscan_execute(&req, results);
 	closelog();
