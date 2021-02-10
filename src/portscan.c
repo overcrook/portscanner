@@ -151,13 +151,6 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 		ports_to_scan -= ret;
 	}
 
-	for (int i = 0; i <= req->port_end - req->port_start; i++) {
-		int status = results[i].status;
-
-		log_debug("port %d is %s", results[i].port, status == PORT_STATUS_OPEN ? "open" :
-		                                            status == PORT_STATUS_CLOSED ? "closed" : "filtered");
-	}
-
 	close(rawsock);
 	return 0;
 }
