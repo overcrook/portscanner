@@ -52,7 +52,8 @@ int probe_send(int sock, struct route_info *route, in_port_t sport, in_port_t dp
 
 	int ret = -1;
 
-	for (in_port_t dport = dport_start; dport <=dport_end; dport++) {
+	// Не используем 16-разрядный in_port_t, так как при значении dport_end == 65535 происходит переполнение переменной
+	for (uint32_t dport = dport_start; dport <=dport_end; dport++) {
 		if (probe_send_one(sock, route, sport, dport, tcp_sn, retry_index) == 0)
 			ret = 0;
 	}
