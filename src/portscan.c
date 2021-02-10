@@ -68,15 +68,6 @@ static int validate_request(struct portscan_req *req, struct route_info *route_i
 		}
 	}
 
-	if (req->interface) {
-		route_info->ifindex = if_nametoindex(req->interface);
-
-		if (route_info->ifindex == 0) {
-			plog_err("Cannot find interface '%s'", req->interface);
-			return -ENODEV;
-		}
-	}
-
 	return 0;
 }
 

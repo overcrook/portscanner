@@ -128,7 +128,6 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 	const struct option long_options[] = {
 		{"source",          required_argument, 0, 's'},
 		{"dest",            required_argument, 0, 'd'},
-		{"interface",       required_argument, 0, 'i'},
 		{"ports",           required_argument, 0, 'p'},
 		{"loglevel",        required_argument, 0, 'l'},
 		{"show",            required_argument, 0, 1},
@@ -139,7 +138,7 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 
 	while (1) {
 		int option_index = 0;
-		int opt = getopt_long(argc, argv, "hvs:d:i:p:l:", long_options, &option_index);
+		int opt = getopt_long(argc, argv, "hvs:d:p:l:", long_options, &option_index);
 
 		if (opt == -1)
 			break;
@@ -151,10 +150,6 @@ static void parse_args(int argc, char *const argv[], struct portscan_req *req, s
 
 			case 'd':
 				req->dst_ip = optarg;
-				break;
-
-			case 'i':
-				req->interface = optarg;
 				break;
 
 			case 'p':
