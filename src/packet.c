@@ -39,8 +39,10 @@ static int sum_data(uint16_t cksum, const void *bytes, size_t size)
 	if (size % 2)
 		acc += bytes8[size - 1] << 16;
 
-	cksum = (acc & 0xFFFF) + (acc >> 16);
-	return cksum;
+	while (acc >> 16 > 0)
+		acc = (acc & 0xFFFF) + (acc >> 16);
+
+	return acc;
 }
 
 /**
