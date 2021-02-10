@@ -4,8 +4,7 @@
 #include "probe_send.h"
 #include "log.h"
 
-static int probe_send_one(int sock, struct route_info *route, in_port_t sport, in_port_t dport, uint32_t tcp_sn,
-                          int retry_index)
+int probe_send_one(int sock, struct route_info *route, in_port_t sport, in_port_t dport, uint32_t tcp_sn)
 {
 	uint8_t packet[500];
 	struct tcp_setup tcp_setup = {
@@ -36,16 +35,14 @@ static int probe_send_one(int sock, struct route_info *route, in_port_t sport, i
 	assert(packet_size > 0);
 
 	if (sendto(sock, packet, packet_size, 0, (struct sockaddr *) &addr, addrlen) < 0) {
-		// TODO: стоит обработать errno и проверить причину ошибки отправки
-		plog_warning("Cannot send a packet on raw socket to dport %d (retry_index %d)", dport, retry_index);
-		return -1;
+		return -errno;
 	}
 
 	return 0;
 }
 
 int probe_send(int sock, struct route_info *route, in_port_t sport, in_port_t dport_start, in_port_t dport_end,
-               uint32_t tcp_sn, int retry_index)
+               uint32_t tcp_sn)
 {
 	if (!dport_end)
 		dport_end = dport_start;
@@ -54,7 +51,7 @@ int probe_send(int sock, struct route_info *route, in_port_t sport, in_port_t dp
 
 	// Не используем 16-разрядный in_port_t, так как при значении dport_end == 65535 происходит переполнение переменной
 	for (uint32_t dport = dport_start; dport <=dport_end; dport++) {
-		if (probe_send_one(sock, route, sport, dport, tcp_sn, retry_index) == 0)
+		if (probe_send_one(sock, route, sport, dport, tcp_sn) == 0)
 			ret = 0;
 	}
 

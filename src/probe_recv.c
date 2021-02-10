@@ -166,7 +166,7 @@ static int filter_by_tcp(const struct tcphdr *hdr, in_port_t sport, in_port_t dp
 	}
 
 	if (ntohs(hdr->th_sport) < dport_start || ntohs(hdr->th_sport) > dport_end) {
-		log_warning("Received packet is from different source port");
+		log_warning("Received packet is from different source port (got %d, expected %d-%d)", ntohs(hdr->th_sport), dport_start, dport_end);
 		return -1;
 	}
 
@@ -185,8 +185,8 @@ static int filter_by_tcp(const struct tcphdr *hdr, in_port_t sport, in_port_t dp
 	return 0;
 }
 
-static int process_answer(int sock, struct route_info *route, in_port_t sport, in_port_t dport_start,
-                          in_port_t dport_end, uint32_t tcp_sn, struct portscan_result *result)
+int probe_recv_one(int sock, struct route_info *route, in_port_t sport, in_port_t dport_start,
+                   in_port_t dport_end, uint32_t tcp_sn, struct portscan_result *result)
 {
 	uint8_t buffer[2048]; // достаточный для получения с учетом MTU 1500
 	union sockaddr_in46 addr;
@@ -258,7 +258,7 @@ int probe_recv(int sock, struct route_info *route, in_port_t sport, in_port_t dp
 		timeo -= (int) timediff(&start_time);
 		log_debug("timeo for next poll iteration: %d", timeo);
 
-		if (process_answer(sock, route, sport, dport_start, dport_end, tcp_sn, &result) < 0)
+		if (probe_recv_one(sock, route, sport, dport_start, dport_end, tcp_sn, &result) < 0)
 			continue;
 
 		// Нашли ответ - проверим, что мы не получали его раньше, и занесем в массив ответов
