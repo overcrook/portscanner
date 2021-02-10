@@ -29,10 +29,62 @@ static int parse_ip(const char *str_address, union in46_addr *addr)
 	return AF_UNSPEC;
 }
 
+static int validate_request(struct portscan_req *req, struct route_info *route_info)
+{
+	if (req->port_start == 0 || req->port_start > 65535 || req->port_end > 65535) {
+		log_err("Port must be in range [1:65535]");
+		return -ERANGE;
+	}
+
+	if (req->port_end < req->port_start) {
+		log_err("End port must be greater than start port");
+		return -ERANGE;
+	}
+
+	if (!req->dst_ip) {
+		log_err("Destination address is not specified");
+		return -EDESTADDRREQ;
+	}
+
+	route_info->af = parse_ip(req->dst_ip, &route_info->dst);
+
+	if (route_info->af == AF_UNSPEC) {
+		log_err("Destination address '%s' is not a valid IPv4/IPv6 address", req->dst_ip);
+		return -EAFNOSUPPORT;
+	}
+
+	if (req->src_ip) {
+		int src_af = parse_ip(req->src_ip, &route_info->src);
+
+		if (src_af == AF_UNSPEC) {
+			log_err("Source address '%s' is not a valid IP address", req->src_ip);
+			return -EAFNOSUPPORT;
+		}
+
+		if (src_af != route_info->af) {
+			log_err("Source address '%s' and destination address '%s' belong to different IP stacks",
+			        req->src_ip, req->dst_ip);
+			return -EAFNOSUPPORT;
+		}
+	}
+
+	if (req->interface) {
+		route_info->ifindex = if_nametoindex(req->interface);
+
+		if (route_info->ifindex == 0) {
+			plog_err("Cannot find interface '%s'", req->interface);
+			return -ENODEV;
+		}
+	}
+
+	return 0;
+}
+
 
 int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 {
 	struct route_info route_info;
+	int ret;
 
 	memset(&route_info, 0, sizeof(route_info));
 
@@ -40,52 +92,8 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 		return -1;
 	}
 
-	// TODO: вынести весь код валидации в отдельную функцию (и возможно, возвращать EINVAL в общем случае)
-	if (req->port_start == 0 || req->port_start > 65535 || req->port_end > 65535) {
-		log_err("Port must be in range [1:65535]");
-		return -1;
-	}
-
-	if (req->port_end < req->port_start) {
-		log_err("End port must be greater than start port");
-		return -1;
-	}
-
-	if (!req->dst_ip) {
-		log_err("Destination address is not specified");
-		return -1;
-	}
-
-	route_info.af = parse_ip(req->dst_ip, &route_info.dst);
-
-	if (route_info.af == AF_UNSPEC) {
-		log_err("Destination address '%s' is not a valid IP address", req->dst_ip);
-		return -1;
-	}
-
-	if (req->src_ip) {
-		int src_af = parse_ip(req->src_ip, &route_info.src);
-
-		if (src_af == AF_UNSPEC) {
-			log_err("Source address '%s' is not a valid IP address", req->src_ip);
-			return -1;
-		}
-
-		if (src_af != route_info.af) {
-			log_err("Source address '%s' and destination address '%s' belong to different IP stacks",
-			        req->src_ip, req->dst_ip);
-			return -1;
-		}
-	}
-
-	if (req->interface) {
-		route_info.ifindex = if_nametoindex(req->interface);
-
-		if (route_info.ifindex == 0) {
-			plog_err("Cannot find interface '%s'", req->interface);
-			return -1;
-		}
-	}
+	if ((ret = validate_request(req, &route_info)))
+		return ret;
 
 	if (fetch_route_info(&route_info) < 0)
 		return -1;
@@ -107,7 +115,6 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 		results[i].status = PORT_STATUS_FILTERED;
 	}
 
-	// TODO: actual port scan
 	int rawsock = socket(route_info.af, SOCK_RAW, IPPROTO_TCP);
 
 	if (rawsock < 0) {
