@@ -40,21 +40,3 @@ int probe_send_one(int sock, struct route_info *route, in_port_t sport, in_port_
 
 	return 0;
 }
-
-int probe_send(int sock, struct route_info *route, in_port_t sport, in_port_t dport_start, in_port_t dport_end,
-               uint32_t tcp_sn)
-{
-	if (!dport_end)
-		dport_end = dport_start;
-
-	int ret = -1;
-
-	// Не используем 16-разрядный in_port_t, так как при значении dport_end == 65535 происходит переполнение переменной
-	for (uint32_t dport = dport_start; dport <=dport_end; dport++) {
-		if (probe_send_one(sock, route, sport, dport, tcp_sn) == 0)
-			ret = 0;
-	}
-
-	// возвращаем успех, если хотя бы один пакет был успешно отправлен и есть смысл ожидать ответы
-	return ret;
-}
