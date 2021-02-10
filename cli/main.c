@@ -9,6 +9,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #define BIT(x)  (1UL << x)
 
@@ -241,17 +242,37 @@ int main(int argc, char *const argv[])
 
 	if (ret == 0) {
 		printf("Port scan result for %s\n", req.dst_ip);
+		int skipped_ports[3] = {0, 0, 0}; // FILTERED, OPEN, CLOSED
 
 		for (int i = 0; i <= req.port_end - req.port_start; i++) {
 			int status = results[i].status;
 
-			if ((options.show_filter & BIT(status)) == 0)
+			if ((options.show_filter & BIT(status)) == 0) {
+				skipped_ports[status]++;
 				continue;
+			}
 
 			printf(" %d/tcp  \t%s\n", results[i].port, portscan_strstatus(status));
 		}
 
 		printf("Port scan completed in %ld.%03ld sec.\n", elapsed_seconds / 1000, elapsed_seconds % 1000);
+
+		if (skipped_ports[PORT_STATUS_OPEN] || skipped_ports[PORT_STATUS_FILTERED] || skipped_ports[PORT_STATUS_CLOSED]) {
+			fputs("Not showing ", stdout);
+			bool need_comma = false;
+
+			for (int i = 0; i < 3; i++) {
+				if (skipped_ports[i]) {
+					if (need_comma)
+						fputs(", ", stdout);
+
+					need_comma = true;
+					printf("%d %s", skipped_ports[i], portscan_strstatus(i));
+				}
+			}
+
+			fputs(" ports.\n", stdout);
+		}
 	}
 
 	free(results);
