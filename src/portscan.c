@@ -114,19 +114,6 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 		return -1;
 	}
 
-	union {
-		struct sockaddr_in  in4;
-		struct sockaddr_in6 in6;
-	} addr = {
-		.in4.sin_family = route_info.af, // одновременно задаем family для IPv4/IPv6 и зануляем все остальное
-	};
-
-	if (bind(rawsock, (struct sockaddr *) &addr, route_info.af == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in))) {
-		plog_err("Cannot bind");
-		return -1;
-	}
-
-
 	// Генерируем рандомный порт в диапазоне 32768-61000
 	in_port_t sport = rand() % (61000 - 32768) + 32768;
 
