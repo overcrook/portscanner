@@ -97,4 +97,13 @@ int portscan_execute(struct portscan_req *req, struct portscan_result *results);
 const char *portscan_version(void);
 
 
+/**
+ * Возвращает строковое значение состояния порта (open, filtered, closed)
+ *
+ * @param status - состояние порта
+ * @return строковое значение состояния порта
+ */
+const char *portscan_strstatus(enum port_status status);
+
+
 #endif //PORTSCANNER_PORTSCAN_H

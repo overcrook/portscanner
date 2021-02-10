@@ -121,3 +121,15 @@ const char *portscan_version(void)
 {
 	return PORTSCAN_VERSION;
 }
+
+const char *portscan_strstatus(enum port_status status)
+{
+	switch (status) {
+		case PORT_STATUS_OPEN:     return "open";
+		case PORT_STATUS_FILTERED: return "filtered";
+		case PORT_STATUS_CLOSED:   return "closed";
+		default: break;
+	}
+
+	return "unknown";
+}
