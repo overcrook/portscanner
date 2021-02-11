@@ -8,6 +8,7 @@ add_library(portscanner SHARED
         src/route.c
         src/probe_recv.c
         src/probe_send.c
+        src/bpf.c
 )
 
 add_executable(portscanner_cli

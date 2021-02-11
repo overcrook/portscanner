@@ -16,6 +16,7 @@
 #include "log.h"
 #include "probe_send.h"
 #include "probe_recv.h"
+#include "bpf.h"
 
 
 #define RETRY_LIMIT 2
@@ -119,6 +120,10 @@ static int portscan_prepare(struct portscan_context *ctx)
 
 	// Генерируем рандомный sequence number
 	ctx->tcp_sn = rand();
+
+	if (bpf_attach_filter(ctx->sock, ctx))
+		return -1;
+
 	return 0;
 }
 
