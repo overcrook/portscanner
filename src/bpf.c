@@ -8,8 +8,42 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include "bpf.h"
 #include "log.h"
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+
+#define BPF_RETURN(x) \
+	{BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, .imm = (x)}, \
+	{BPF_JMP | BPF_EXIT}
+
+#define BPF_MOV_REG(dst, src) \
+	{.code = BPF_ALU64 | BPF_MOV | BPF_X, .dst_reg = (dst), .src_reg = (src)}
+
+#define BPF_MOV_VALUE(dst, value) \
+	{.code = BPF_ALU   | BPF_MOV | BPF_K, .dst_reg = (dst), .imm = (value)}
+
+#define BPF_PKT_LOAD_ABS(size, offset) \
+	{.code = BPF_LD    | BPF_ABS | (size), .imm = (offset)}
+
+#define BPF_PKT_LOAD_IND(size, base, offset) \
+	{.code = BPF_LD    | BPF_IND | (size), .src_reg = (base), .imm = (offset)}
+
+#define BPF_JEQ_REG(dst, src, goto_num) \
+	{.code = BPF_JMP   | BPF_JEQ | BPF_X, .dst_reg = (dst), .src_reg = (src), .off = (goto_num)}
+
+#define BPF_JEQ_VALUE(dst, value, goto_num) \
+	{.code = BPF_JMP   | BPF_JEQ | BPF_K, .dst_reg = (dst), .off = (goto_num), .imm = (value)}
+
+#define BPF_JGE_VALUE(dst, value, goto_num) \
+	{.code = BPF_JMP   | BPF_JGE | BPF_K, .dst_reg = (dst), .off = (goto_num), .imm = (value)}
+
+#define BPF_JLE_VALUE(dst, value, goto_num) \
+	{.code = BPF_JMP   | BPF_JLE | BPF_K, .dst_reg = (dst), .off = (goto_num), .imm = (value)}
+
+#define BPF_ALU_VALUE(op, dst, value) \
+	{.code = BPF_ALU   | (op) | BPF_K, .dst_reg = (dst), .imm = (value)}
 
 static int bpf(int cmd, union bpf_attr *attr, unsigned int size)
 {
@@ -48,38 +82,7 @@ static int bpf_prog_load(enum bpf_prog_type type, const struct bpf_insn *insns, 
 
 int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 {
-#define BPF_RETURN(x) \
-	{BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, .imm = x}, \
-	{BPF_JMP | BPF_EXIT}
-
-#define BPF_MOV_REG(dst, src) \
-	{.code = BPF_ALU64 | BPF_MOV | BPF_X, .dst_reg = dst, .src_reg = src}
-
-#define BPF_MOV_VALUE(dst, value) \
-	{.code = BPF_ALU   | BPF_MOV | BPF_K, .dst_reg = dst, .imm = value}
-
-#define BPF_PKT_LOAD_ABS(size, offset) \
-	{.code = BPF_LD    | BPF_ABS | size, .imm = offset}
-
-#define BPF_PKT_LOAD_IND(size, base, offset) \
-	{.code = BPF_LD    | BPF_IND | size, .src_reg = base, .imm = offset}
-
-#define BPF_JEQ_REG(dst, src, goto_num) \
-	{.code = BPF_JMP   | BPF_JEQ | BPF_X, .dst_reg = dst, .src_reg = src, .off = goto_num}
-
-#define BPF_JEQ_VALUE(dst, value, goto_num) \
-	{.code = BPF_JMP   | BPF_JEQ | BPF_K, .dst_reg = dst, .off = goto_num, .imm = value}
-
-#define BPF_JGE_VALUE(dst, value, goto_num) \
-	{.code = BPF_JMP   | BPF_JGE | BPF_K, .dst_reg = dst, .off = goto_num, .imm = value}
-
-#define BPF_JLE_VALUE(dst, value, goto_num) \
-	{.code = BPF_JMP   | BPF_JLE | BPF_K, .dst_reg = dst, .off = goto_num, .imm = value}
-
-#define BPF_ALU_VALUE(op, dst, value) \
-	{.code = BPF_ALU   | op | BPF_K, .dst_reg = dst, .imm = value}
-
-	const struct bpf_insn filter[] = {
+	const struct bpf_insn ipv4_filter[] = {
 		/* r6 = r1 */
 		BPF_MOV_REG(BPF_REG_6, BPF_REG_1),
 		/* r0 = ip->protocol */
@@ -112,6 +115,17 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 		BPF_ALU_VALUE(BPF_MUL, BPF_REG_0, 4),
 		/* r7 = r0 */
 		BPF_MOV_REG(BPF_REG_7, BPF_REG_0),
+	};
+
+	const struct bpf_insn ipv6_filter[] = {
+		/* r6 = r1 */
+		BPF_MOV_REG(BPF_REG_6, BPF_REG_1),
+
+		/* r7 = 0 (IPv6 header is excluded from the received payload, so no need to shift */
+		BPF_MOV_VALUE(BPF_REG_7, 0),
+	};
+
+	const struct bpf_insn tcp_filter[] = {
 
 		/* r0 = tcp->th_dport */
 		BPF_PKT_LOAD_IND(BPF_H, BPF_REG_7, offsetof(struct tcphdr, th_dport)),
@@ -138,17 +152,36 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 		BPF_RETURN(0xFFFFFFFF),
 	};
 
-	int bpf_fd = bpf_prog_load(BPF_PROG_TYPE_SOCKET_FILTER, filter, sizeof(filter) / sizeof(filter[0]), "GPL");
+	int ret = -1;
+	struct bpf_insn *filter = NULL;
+	size_t filter_insn_count = 0;
+
+	if (ctx->route->af == AF_INET) {
+		filter_insn_count = ARRAY_SIZE(ipv4_filter) + ARRAY_SIZE(tcp_filter);
+		filter = malloc(filter_insn_count * sizeof(struct bpf_insn));
+		memcpy(filter, ipv4_filter, sizeof(ipv4_filter));
+		memcpy(filter + ARRAY_SIZE(ipv4_filter), tcp_filter, sizeof(tcp_filter));
+	} else {
+		filter_insn_count = ARRAY_SIZE(ipv6_filter) + ARRAY_SIZE(tcp_filter);
+		filter = malloc(filter_insn_count * sizeof(struct bpf_insn));
+		memcpy(filter, ipv6_filter, sizeof(ipv6_filter));
+		memcpy(filter + ARRAY_SIZE(ipv6_filter), tcp_filter, sizeof(tcp_filter));
+	}
+
+	int bpf_fd = bpf_prog_load(BPF_PROG_TYPE_SOCKET_FILTER, filter, filter_insn_count, "GPL");
 
 	if (bpf_fd < 0)
-		return - 1;
+		goto out;
 
 	if (setsockopt(sock, SOL_SOCKET, SO_ATTACH_BPF, &bpf_fd, sizeof(bpf_fd))) {
 		plog_err("Cannot attach eBPF filter to socket");
-		return -1;
+		goto out;
 	}
 
-	close(bpf_fd);
+	ret = 0;
 
-	return 0;
+out:
+	free(filter);
+	close(bpf_fd);
+	return ret;
 }
