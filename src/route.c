@@ -206,12 +206,21 @@ int fetch_route_info(struct route_info *info)
 	assert(info->af == AF_INET || info->af == AF_INET6);
 	assert(!is_addr_empty(info->af, &info->dst));
 
+	struct sockaddr_nl nl_addr = {
+		.nl_family = AF_NETLINK,
+	};
+
 	int ret = -1;
 	int nl_sock = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
 
 	if (nl_sock < 0) {
 		plog_err("Cannot open a socket to Netlink");
 		return -1;
+	}
+
+	if (bind(nl_sock, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) < 0) {
+		plog_err("Cannot bind a socket to Netlink");
+		goto out;
 	}
 
 	uint8_t buffer[8192]; // Netlink оперирует сообщениями максимум в 8К
