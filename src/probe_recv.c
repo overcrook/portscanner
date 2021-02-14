@@ -1,10 +1,7 @@
 #include <stdint.h>
 #include <inttypes.h>
-#include <poll.h>
 #include <netinet/ip.h>
-#include <netinet/ip6.h>
 #include <netinet/tcp.h>
-#include <assert.h>
 #include <time.h>
 
 #include "portscan.h"
@@ -23,26 +20,6 @@ static inline int compare_addr(const struct route_info *route, const union socka
 		return memcmp(&route->dst, &addr->in6.sin6_addr, sizeof(addr->in6.sin6_addr));
 
 	return memcmp(&route->dst, &addr->in4.sin_addr, sizeof(addr->in4.sin_addr));
-}
-
-static inline struct timespec timeget(void)
-{
-	struct timespec ts;
-
-	int ret = clock_gettime(CLOCK_MONOTONIC, &ts);
-
-	assert(ret == 0);
-	return ts;
-}
-
-static inline long timediff(struct timespec *begin)
-{
-	struct timespec end = timeget();
-
-	if (end.tv_sec > begin->tv_sec)
-		return (end.tv_sec - begin->tv_sec) * 1000L + (end.tv_nsec + 1000000000L - begin->tv_nsec) / 1000000L;
-
-	return (end.tv_nsec - begin->tv_nsec) / 1000000L;
 }
 
 static ssize_t recv_packet(int sock, union sockaddr_in46 *addr, uint8_t *buffer, size_t buffer_size)
@@ -89,7 +66,7 @@ static int filter_by_iphdr(const struct iphdr *hdr, struct route_info *route)
 		return -1;
 	}
 
-	if (ntohs(hdr->tot_len) - hdr->ihl < sizeof(struct tcphdr)) {
+	if (ntohs(hdr->tot_len) - (int) (hdr->ihl) < (int) sizeof(struct tcphdr)) {
 		log_warning("Received packet is too small to contain a TCP header");
 		return -1;
 	}
@@ -118,10 +95,10 @@ static const struct tcphdr *filter_by_ip(const uint8_t *packet, size_t packet_si
 	}
 
 	// На всякий случай убедимся, что пакет действительно вмещает в себя заголовок TCP
-	int expected_size = (((const uint8_t *) tcphdr) - packet) + sizeof(struct tcphdr);
+	size_t expected_size = (((const uint8_t *) tcphdr) - packet) + sizeof(struct tcphdr);
 
 	if (expected_size > packet_size) {
-		log_warning("Received a truncated packet (got %d bytes, expected %d)", packet_size, expected_size);
+		log_warning("Received a truncated packet (got %zu bytes, expected %zu)", packet_size, expected_size);
 		return NULL;
 	}
 

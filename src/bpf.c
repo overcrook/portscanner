@@ -15,8 +15,8 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 #define BPF_RETURN(x) \
-	{BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, .imm = (x)}, \
-	{BPF_JMP | BPF_EXIT}
+	{.code = BPF_ALU64 | BPF_MOV | BPF_K, .dst_reg = BPF_REG_0, .imm = (x)}, \
+	{.code = BPF_JMP | BPF_EXIT}
 
 #define BPF_MOV_REG(dst, src) \
 	{.code = BPF_ALU64 | BPF_MOV | BPF_X, .dst_reg = (dst), .src_reg = (src)}

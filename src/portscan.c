@@ -172,7 +172,7 @@ static int portscan_prepare(struct portscan_context *ctx)
  * @param ctx
  * @return
  */
-int portscan_process(struct portscan_context *ctx)
+static int portscan_process(struct portscan_context *ctx)
 {
 	struct pollfd pfd = {
 		.fd     = ctx->sock,

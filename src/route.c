@@ -174,7 +174,7 @@ static int nl_recv(int sock, uint8_t *buffer, size_t size, nl_cb_t callback, voi
 }
 
 
-int parse_rtm_getroute(struct nlmsghdr *nlh, void *arg)
+static int parse_rtm_getroute(struct nlmsghdr *nlh, void *arg)
 {
 	struct route_info *info = arg;
 	struct rtmsg *rtm = nlmsg_extraheader(nlh);

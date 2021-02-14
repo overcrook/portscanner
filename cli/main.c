@@ -74,7 +74,7 @@ static void parse_log(struct cli_options *options, const char *source)
 	if (!strncasecmp(source, "log_", 4))
 		source += 4;
 
-	for (int i = 0; i < sizeof(log_levels) / sizeof(log_levels[0]); i++) {
+	for (size_t i = 0; i < sizeof(log_levels) / sizeof(log_levels[0]); i++) {
 		if (!strcasecmp(source, log_levels[i])) {
 			options->logmask = LOG_UPTO(i);
 			return;
