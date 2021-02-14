@@ -98,41 +98,13 @@ static int filter_by_iphdr(const struct iphdr *hdr, struct route_info *route)
 	return 0;
 }
 
-static int filter_by_ip6_hdr(const struct ip6_hdr *hdr, struct route_info *route)
-{
-	if (hdr->ip6_nxt != IPPROTO_TCP) {
-		log_warning("Received packet is not a TCP");
-		return -1;
-	}
-
-	if (memcmp(&hdr->ip6_src, &route->dst, sizeof(hdr->ip6_src)) != 0) {
-		log_warning("Received a packet from different host");
-		return -1;
-	}
-
-	if (ntohs(hdr->ip6_plen) < sizeof(struct tcphdr)) {
-		log_warning("Received packet is too small to contain a TCP header");
-		return -1;
-	}
-
-	// Похоже, что это от нашей целевой машины
-	return 0;
-}
-
 static const struct tcphdr *filter_by_ip(const uint8_t *packet, size_t packet_size, struct route_info *route)
 {
 	const struct tcphdr *tcphdr = NULL;
 
 	if (route->af == AF_INET6) {
-		if (packet_size < sizeof(struct ip6_hdr)) {
-			log_warning("Received packet is too small to contain an IPv6 header");
-			return NULL;
-		}
-
-		if (filter_by_ip6_hdr((const struct ip6_hdr *) packet, route))
-			return NULL;
-
-		tcphdr = (const struct tcphdr *) (packet + sizeof(struct ip6_hdr));
+		// При работе с raw-socket AF_INET6 ядро не включает заголовок IPv6 в ответ
+		tcphdr = (const struct tcphdr *) packet;
 	} else {
 		if (packet_size < sizeof(struct iphdr)) {
 			log_warning("Received packet is too small to contain an IPv4 header");
