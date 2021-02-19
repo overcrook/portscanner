@@ -46,9 +46,15 @@ add_library(portscanner SHARED
         src/probe_send.c
         src/bpf.c
 )
+set_target_properties(portscanner PROPERTIES PUBLIC_HEADER "include/portscan.h")
 
 add_executable(portscanner_cli
         cli/main.c
 )
 
 target_link_libraries(portscanner_cli portscanner)
+install(TARGETS portscanner portscanner_cli
+	LIBRARY       DESTINATION lib
+	RUNTIME       DESTINATION bin
+	PUBLIC_HEADER DESTINATION include
+)
