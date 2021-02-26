@@ -70,9 +70,8 @@ static int bpf_prog_load(enum bpf_prog_type type, const struct bpf_insn *insns, 
 
 	int ret = bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
 
-	log_notice("Kernel message: \n%s", bpf_log_buf);
 	if (ret < 0) {
-		plog_err("Error loading eBPF(BPF_PROG_LOAD)");
+		plog_warning("Error loading eBPF(BPF_PROG_LOAD)");
 		log_notice("Kernel message: \n%s", bpf_log_buf);
 		return -1;
 	}
@@ -174,7 +173,7 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 		goto out;
 
 	if (setsockopt(sock, SOL_SOCKET, SO_ATTACH_BPF, &bpf_fd, sizeof(bpf_fd))) {
-		plog_err("Cannot attach eBPF filter to socket");
+		plog_warning("Cannot attach eBPF filter to socket");
 		goto out;
 	}
 

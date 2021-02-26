@@ -153,10 +153,7 @@ struct portscan_context *portscan_prepare(struct portscan_req *req, struct ports
 	ctx->tcp_sn = rand();
 
 	if (bpf_attach_filter(ctx->sock, ctx)) {
-		close(sock);
-		close(timerfd);
-		free(ctx);
-		return NULL;
+		log_info("eBPF feature is disabled, all received packets will be filtered by userland.");
 	}
 
 	return ctx;
