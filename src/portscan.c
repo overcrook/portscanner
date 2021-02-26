@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <netdb.h>
@@ -94,25 +95,55 @@ static inline void log_route(struct route_info *route_info, const char *dst)
 }
 
 
-/**
- * Инициализирует *ctx* данными, которые нужно проинициализировать один раз
- *
- * @param ctx - контекст для portscan
- * @retval 0  - успех
- * @retval -1 - ошибка создания сокета
- */
-static int portscan_prepare(struct portscan_context *ctx)
+struct portscan_context *portscan_prepare(struct portscan_req *req, struct portscan_result *results)
 {
+	struct route_info route_info;
+
+	memset(&route_info, 0, sizeof(route_info));
+
+	if (!results) {
+		return NULL;
+	}
+
+	if (validate_request(req, &route_info))
+		return NULL;
+
+	if (fetch_route_info(&route_info) < 0)
+		return NULL;
+
+	log_route(&route_info, req->dst_ip);
+
+	int sock = socket(route_info.af, SOCK_RAW, IPPROTO_TCP);
+
+	if (sock < 0) {
+		plog_err("Cannot open socket(%s, SOCK_RAW, IPPROTO_TCP)", route_info.af == AF_INET6 ? "AF_INET6" : "AF_INET");
+		return NULL;
+	}
+
+	int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+
+	if (timerfd < 0) {
+		plog_err("Cannot create timerfd");
+		close(sock);
+		return NULL;
+	}
+
+	struct portscan_context *ctx = calloc(1, sizeof(*ctx));
+
+	ctx->sock = sock;
+	ctx->timerfd = timerfd;
+	ctx->results = results;
+	ctx->dport_start = req->port_start;
+	ctx->dport_end   = req->port_end;
+	ctx->total_ports = req->port_end - req->port_start + 1;
+	ctx->send_quota = SEND_QUOTA_MAX;
+	ctx->retry_counter  = RETRY_LIMIT;
+	ctx->events = POLLIN | POLLOUT;
+	memcpy(&ctx->route, &route_info, sizeof(route_info));
+
 	for (int i = 0; i <= ctx->dport_end - ctx->dport_start; i++) {
 		ctx->results[i].port   = ctx->dport_start + i;
 		ctx->results[i].status = PORT_STATUS_FILTERED;
-	}
-
-	ctx->sock = socket(ctx->route->af, SOCK_RAW, IPPROTO_TCP);
-
-	if (ctx->sock < 0) {
-		plog_err("Cannot open socket(%s, SOCK_RAW, IPPROTO_TCP)", ctx->route->af == AF_INET6 ? "AF_INET6" : "AF_INET");
-		return -1;
 	}
 
 	// Генерируем рандомный порт в диапазоне 32768-61000
@@ -121,10 +152,14 @@ static int portscan_prepare(struct portscan_context *ctx)
 	// Генерируем рандомный sequence number
 	ctx->tcp_sn = rand();
 
-	if (bpf_attach_filter(ctx->sock, ctx))
-		return -1;
+	if (bpf_attach_filter(ctx->sock, ctx)) {
+		close(sock);
+		close(timerfd);
+		free(ctx);
+		return NULL;
+	}
 
-	return 0;
+	return ctx;
 }
 
 
@@ -135,14 +170,139 @@ static int portscan_prepare(struct portscan_context *ctx)
  * Число попыток при этом уменьшается, и дополнительно выставляется признак ожидания всех ответов
  * перед началом работы с новой попыткой.
  */
-#define cursor_advance(cursor, retry_counter, wait_all_before_pollout) do { \
-	if (++cursor >= total_ports) {                                          \
-	    retry_counter--;                                                    \
-	    wait_all_before_pollout = true;                                     \
-	    cursor = 0;                                                         \
+#define cursor_advance(ctx) do { \
+	if (++(ctx)->cursor >= (ctx)->total_ports) {                            \
+	    (ctx)->retry_counter--;                                             \
+	    (ctx)->cursor = 0;                                                  \
 	}                                                                       \
 } while (0)
 
+static inline int timerfd_oneshot(int tfd, int timeout)
+{
+	struct itimerspec spec = {
+		.it_value = {
+			.tv_sec = timeout / 1000,
+			.tv_nsec = (timeout % 1000) * 1000000
+		}
+	};
+
+	return timerfd_settime(tfd, 0, &spec, NULL);
+}
+
+static inline int portscan_continue(struct portscan_context *ctx)
+{
+	return ctx->answered_ports < ctx->total_ports;
+}
+
+int portscan_pollin(struct portscan_context *ctx)
+{
+	log_debug("Process POLLIN");
+	struct portscan_result result;
+
+	// Пробуем прочитать ответ и сопоставить его с нашими данными
+	if (probe_recv_one(ctx->sock, &ctx->route, ctx->sport, ctx->dport_start, ctx->dport_end, ctx->tcp_sn, &result) < 0)
+		return portscan_continue(ctx);
+
+	// Нашли ответ - проверим, что мы не получали его раньше, и занесем в массив ответов
+	int index = result.port - ctx->dport_start;
+
+	assert(index < ctx->total_ports);
+
+	if (ctx->results[index].status != PORT_STATUS_FILTERED) {
+		plog_warning("Found another response for port %u (TCP retransmission?)", result.port);
+		return portscan_continue(ctx);
+	}
+
+	// Это новый ответ - сохраняем его
+	memcpy(&ctx->results[index], &result, sizeof(result));
+	ctx->answered_ports++;
+
+	log_debug("Successfully processed one response - increase send_quota");
+	ctx->send_quota++;
+
+	// Если нам не нужно дожидаться все ответы, или если нужно, но квота уже полна  - включаем режим отправки
+	if (ctx->send_quota == SEND_QUOTA_MAX) {
+		log_debug("POLLOUT is allowed now - enable POLLOUT");
+		ctx->events |= POLLOUT;
+	}
+
+	return portscan_continue(ctx);
+}
+
+int portscan_pollout(struct portscan_context *ctx)
+{
+	log_debug("Process POLLOUT, cursor = %d", ctx->cursor);
+
+	// Отправляем пакеты, пока не упремся в ограничение квоты или в ошибку отправки
+	while (ctx->retry_counter > 0 && ctx->results[ctx->cursor].status != PORT_STATUS_FILTERED) {
+		cursor_advance(ctx);
+	}
+
+	// Либо мы нашли подходящий порт со статусом FILTERED, либо в итоге число попыток истекло
+	if (ctx->retry_counter == 0) {
+		log_debug("No more retries, disable POLLOUT");
+		ctx->events &= ~POLLOUT;
+		return portscan_continue(ctx);
+	}
+
+	assert(ctx->cursor < ctx->total_ports);
+
+	// Создаем пакет и пробуем отправить его
+	int ret = probe_send_one(ctx->sock, &ctx->route, ctx->sport, ctx->cursor + ctx->dport_start, ctx->tcp_sn);
+	log_debug("Packet sent to port %d, with errno %s (%d)", ctx->cursor + ctx->dport_start, strerror(ret), ret);
+
+	if (ret < 0) {
+		if (ret == ENOBUFS) {
+			// Ядро не успевает за нами отправлять запросы, так что сбросим флаг POLLOUT на время
+			log_debug("ENOBUFS while trying to send - disable POLLOUT");
+			ctx->events &= ~POLLOUT;
+			return portscan_continue(ctx);
+		}
+
+		// Неизвестная ошибка - прерываем работу
+		log_err("Cannot send a packet!");
+		return -1;
+	}
+
+	// Отправили пакет, переходим к следующему порту
+	cursor_advance(ctx);
+	ctx->send_quota--;
+	timerfd_oneshot(ctx->timerfd, 1000);
+
+	// Если квота закончилась, или если в результате cursor_advance мы прошли весь диапазон - отключаем POLLOUT
+	if (ctx->send_quota == 0) {
+		log_debug("Send quota exceeded - disable POLLOUT");
+		ctx->events &= ~POLLOUT;
+	}
+
+	// Если мы в итоге сделали полный цикл, то отключаем отправку
+	if (ctx->cursor == 0) {
+		log_debug("Сursor moved to the end - disable POLLOUT");
+		ctx->events &= ~POLLOUT;
+	}
+
+	return portscan_continue(ctx);
+}
+
+int portscan_timeout(struct portscan_context *ctx)
+{
+	log_debug("timeout");
+	// Таймаут при ожидании доступных действий
+	uint64_t expires;
+	read(ctx->timerfd, &expires, sizeof(expires));
+
+	if (ctx->retry_counter == 0) {
+		// Число попыток отправки пакетов уже превышено, нам больше нечего отправлять
+		return 0;
+	}
+
+	// Все порты, для которых мы ждали ответы, так и останутся отмеченными как filtered.
+	// Очищаем квоту и продолжаем спам дальше.
+	log_debug("timeout waiting responses - refill send_quota and enable POLLOUT");
+	ctx->send_quota = SEND_QUOTA_MAX;
+	ctx->events |= POLLOUT;
+	return portscan_continue(ctx);
+}
 
 /**
  * Выполняет основной цикл отправки TCP-SYN пакетов и ожидания их ответов
@@ -174,36 +334,24 @@ static int portscan_prepare(struct portscan_context *ctx)
  */
 static int portscan_process(struct portscan_context *ctx)
 {
-	struct pollfd pfd = {
-		.fd     = ctx->sock,
-		.events = POLLIN | POLLOUT,
-	};
-
-	// Число пакетов, которые мы можем отправить заранее, прежде чем перейдем к чтению ответов
-	int send_quota = SEND_QUOTA_MAX;
-
-	// Число оставшихся попыток отправки пакетов
-	int retry_counter  = RETRY_LIMIT;
-
-	// Число портов, с которых были получены ответы
-	int answered_ports = 0;
-
-	// Общее число опрашиваемых портов
-	int total_ports    = ctx->dport_end - ctx->dport_start + 1;
-
-	// Текущая позиция в диапазоне портов
-	int cursor = 0;
-
-	// Признак завершения одного прохода по всему диапазону портов
-	bool wait_all_before_pollout = false;
-
+	int ret;
 
 	// Крутимся в цикле до тех пор, пока не обработаем все порты (или пока он не будет прерван извне)
-	while (answered_ports < total_ports) {
-		log_debug("Start iteration, current status: retry_counter=%d cursor=%d answered_ports=%d send_quota=%d",
-		          retry_counter, cursor, answered_ports, send_quota);
+	while (1) {
+		struct pollfd pfd[2] = {
+			{
+				.fd     = ctx->timerfd,
+				.events = POLLIN
+			}, {
+				.fd     = ctx->sock,
+				.events = ctx->events,
+			}
+		};
 
-		int ret = poll(&pfd, 1, 1000);
+		log_debug("Start iteration, current status: retry_counter=%d cursor=%d answered_ports=%d send_quota=%d",
+		          ctx->retry_counter, ctx->cursor, ctx->answered_ports, ctx->send_quota);
+
+		ret = poll(pfd, 2, -1);
 		log_debug("poll() returned: %d", ret);
 
 		if (ret < 0) {
@@ -211,148 +359,71 @@ static int portscan_process(struct portscan_context *ctx)
 			return -1;
 		}
 
-		// Таймаут при ожидании доступных действий
-		if (ret == 0) {
-			if (pfd.events & POLLOUT && (pfd.revents & POLLOUT) == 0)
-				log_warning("Cannot send a packet within 1 second, looks like there is a kernel/network problem");
+		if (pfd[0].revents & POLLIN) {
+			ret = portscan_timeout(ctx);
 
-			// Число попыток отправки пакетов уже превышено, нам больше нечего отправлять
-			if (retry_counter == 0) {
-				// Если нечего отправлять, и если таймаут при получении ответов - значит, больше нечего делать
+			if (ret <= 0)
 				break;
-			}
-
-			// Все порты, для которых мы ждали ответы, так и останутся отмеченными как filtered.
-			// Очищаем квоту и продолжаем спам дальше.
-			log_debug("timeout waiting responses - refill send_quota and enable POLLOUT");
-			send_quota = SEND_QUOTA_MAX;
-			pfd.events |= POLLOUT;
-			continue;
 		}
 
 		// Этап получения ответов
-		if (pfd.revents & POLLIN) {
-			log_debug("Process POLLIN");
-			struct portscan_result result;
+		if (pfd[1].revents & POLLIN) {
+			ret = portscan_pollin(ctx);
 
-			// Пробуем прочитать ответ и сопоставить его с нашими данными
-			if (probe_recv_one(ctx->sock, ctx->route, ctx->sport, ctx->dport_start, ctx->dport_end, ctx->tcp_sn, &result) < 0)
-				continue;
-
-			// Нашли ответ - проверим, что мы не получали его раньше, и занесем в массив ответов
-			int index = result.port - ctx->dport_start;
-
-			assert(index < total_ports);
-
-			if (ctx->results[index].status != PORT_STATUS_FILTERED) {
-				plog_warning("Found another response for port %u (TCP retransmission?)", result.port);
-				continue;
-			}
-
-			// Это новый ответ - сохраняем его
-			memcpy(&ctx->results[index], &result, sizeof(result));
-			answered_ports++;
-
-			log_debug("Successfully processed one response - increase send_quota");
-			send_quota++;
-
-			// Если нам не нужно дожидаться все ответы, или если нужно, но квота уже полна  - включаем режим отправки
-			if (wait_all_before_pollout == false || send_quota == SEND_QUOTA_MAX) {
-				log_debug("POLLOUT is allowed now - enable POLLOUT");
-				wait_all_before_pollout = false;
-				pfd.events |= POLLOUT;
-			}
+			if (ret <= 0)
+				break;
 		}
 
 		// Этап отправки новых запросов
-		if (pfd.revents & POLLOUT) {
-			log_debug("Process POLLOUT, cursor = %d", cursor);
+		if (pfd[1].revents & POLLOUT && portscan_pollout(ctx)) {
+			ret = portscan_pollout(ctx);
 
-			// Если снова вошли в начало этапа отправки, то wait_all_before_pollout больше не нужен
-			wait_all_before_pollout = false;
-
-			// Отправляем пакеты, пока не упремся в ограничение квоты или в ошибку отправки
-			while (retry_counter > 0 && ctx->results[cursor].status != PORT_STATUS_FILTERED) {
-				cursor_advance(cursor, retry_counter, wait_all_before_pollout);
-			}
-
-			// Либо мы нашли подходящий порт со статусом FILTERED, либо в итоге число попыток истекло
-			if (retry_counter == 0) {
-				log_debug("No more retries, disable POLLOUT");
-				pfd.events &= ~POLLOUT;
-				continue;
-			}
-
-			assert(cursor < total_ports);
-
-			// Создаем пакет и пробуем отправить его
-			ret = probe_send_one(ctx->sock, ctx->route, ctx->sport, cursor + ctx->dport_start, ctx->tcp_sn);
-			log_debug("Packet sent to port %d, with errno %s (%d)", cursor + ctx->dport_start, strerror(ret), ret);
-
-			if (ret < 0) {
-				if (ret == ENOBUFS) {
-					// Ядро не успевает за нами отправлять запросы, так что сбросим флаг POLLOUT на время
-					log_debug("ENOBUFS while trying to send - disable POLLOUT");
-					pfd.events &= ~POLLOUT;
-					continue;
-				}
-
-				// Неизвестная ошибка - прерываем работу
-				log_err("Cannot send a packet!");
-				return -1;
-			}
-
-			// Отправили пакет, переходим к следующему порту
-			cursor_advance(cursor, retry_counter, wait_all_before_pollout);
-			send_quota--;
-
-			// Если квота закончилась, или если в результате cursor_advance мы прошли весь диапазон - отключаем POLLOUT
-			if (send_quota == 0 || wait_all_before_pollout == true) {
-				log_debug("Send quota exceeded or cursor moved to the end - disable POLLOUT");
-				pfd.events &= ~POLLOUT;
-			}
+			if (ret <= 0)
+				break;
 		}
 	}
 
-	return 0;
+	return ret;
+}
+
+void portscan_cleanup(struct portscan_context *ctx)
+{
+	if (!ctx)
+		return;
+
+	close(ctx->sock);
+	close(ctx->timerfd);
+	free(ctx);
 }
 
 int portscan_execute(struct portscan_req *req, struct portscan_result *results)
 {
-	struct route_info route_info;
-	int ret;
+	struct portscan_context *ctx = portscan_prepare(req, results);
 
-	memset(&route_info, 0, sizeof(route_info));
-
-	if (!results) {
-		return -1;
-	}
-
-	if ((ret = validate_request(req, &route_info)))
-		return ret;
-
-	if (fetch_route_info(&route_info) < 0)
+	if (!ctx)
 		return -1;
 
-	log_route(&route_info, req->dst_ip);
+	int ret = portscan_process(ctx);
 
-	struct portscan_context ctx = {
-		.results     = results,
-		.route       = &route_info,
-		.dport_start = req->port_start,
-		.dport_end   = req->port_end,
-	};
-
-	if (portscan_prepare(&ctx) < 0)
-		return -1;
-
-	ret = portscan_process(&ctx);
-
-	close(ctx.sock);
+	portscan_cleanup(ctx);
 	return ret;
 }
 
 
+int portscan_scanfd(const struct portscan_context *ctx)
+{
+	return ctx ? ctx->sock : -1;
+}
+
+int portscan_timerfd(const struct portscan_context *ctx)
+{
+	return ctx ? ctx->timerfd : -1;
+}
+
+int portscan_wanted_events(const struct portscan_context *ctx)
+{
+	return ctx ? ctx->events : 0;
+}
 
 const char *portscan_version(void)
 {

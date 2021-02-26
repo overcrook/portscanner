@@ -94,7 +94,7 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 		/* r0 = ip->saddr */
 		BPF_PKT_LOAD_ABS(BPF_W, offsetof(struct iphdr, saddr)),
 		/* r2 = route->dst */
-		BPF_MOV_VALUE(BPF_REG_2, ntohl(ctx->route->dst.v4.s_addr)),
+		BPF_MOV_VALUE(BPF_REG_2, ntohl(ctx->route.dst.v4.s_addr)),
 		/* if (r0 != r2) goto fail */
 		BPF_JEQ_REG(BPF_REG_0, BPF_REG_2, 2),
 		BPF_RETURN(0),
@@ -102,7 +102,7 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 		/* r0 = ip->daddr */
 		BPF_PKT_LOAD_ABS(BPF_W, offsetof(struct iphdr, daddr)),
 		/* r2 = route->src */
-		BPF_MOV_VALUE(BPF_REG_2, ntohl(ctx->route->src.v4.s_addr)),
+		BPF_MOV_VALUE(BPF_REG_2, ntohl(ctx->route.src.v4.s_addr)),
 		/* if (r0 != r2) goto fail */
 		BPF_JEQ_REG(BPF_REG_0, BPF_REG_2, 2),
 		BPF_RETURN(0),
@@ -156,7 +156,7 @@ int bpf_attach_filter(int sock, const struct portscan_context *ctx)
 	struct bpf_insn *filter = NULL;
 	size_t filter_insn_count = 0;
 
-	if (ctx->route->af == AF_INET) {
+	if (ctx->route.af == AF_INET) {
 		filter_insn_count = ARRAY_SIZE(ipv4_filter) + ARRAY_SIZE(tcp_filter);
 		filter = malloc(filter_insn_count * sizeof(struct bpf_insn));
 		memcpy(filter, ipv4_filter, sizeof(ipv4_filter));
